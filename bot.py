@@ -24,19 +24,37 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "MASUKKAN_TOKEN_BOT_DISINI")
 TEMPLATE_PATH = "template_proposal.docx"
 
 # ─── Field yang bisa diubah ────────────────────────────────────────────────────
+# Label resmi (untuk tampilan /bantuan)
 FIELD_LABELS = {
     "nomor_surat":       "Nomor Surat",
     "tanggal_surat":     "Tanggal Surat",
     "nama_lomba":        "Nama Lomba",
-    "nama_lomba_pendek": "Nama Lomba Pendek (untuk judul tabel)",
+    "nama_lomba_pendek": "Nama Lomba Pendek",
     "tanggal_lomba":     "Tanggal Lomba",
     "tempat_lomba":      "Tempat Lomba",
     "penyelenggara":     "Penyelenggara",
     "biaya":             "Biaya Pendaftaran",
-    "nama_peserta":      "Nama Peserta (pisah koma, maks 4)",
-    "kelas_peserta":     "Kelas Peserta (pisah koma, urutan sama)",
+    "nama_peserta":      "Nama Peserta",
+    "kelas_peserta":     "Kelas Peserta",
     "dosen_pembimbing":  "Dosen Pembimbing",
-    "link_poster":       "Link Poster / Sumber",
+    "link_poster":       "Link Poster",
+}
+
+# Semua alias yang diterima saat parsing (lowercase)
+# Satu key internal bisa punya banyak alias
+FIELD_ALIASES: dict[str, list[str]] = {
+    "nomor_surat":       ["nomor surat", "nomor"],
+    "tanggal_surat":     ["tanggal surat", "tanggal"],
+    "nama_lomba":        ["nama lomba"],
+    "nama_lomba_pendek": ["nama lomba pendek", "nama pendek"],
+    "tanggal_lomba":     ["tanggal lomba", "tanggal pelaksanaan"],
+    "tempat_lomba":      ["tempat lomba", "tempat"],
+    "penyelenggara":     ["penyelenggara"],
+    "biaya":             ["biaya pendaftaran", "biaya"],
+    "nama_peserta":      ["nama peserta", "peserta"],
+    "kelas_peserta":     ["kelas peserta", "kelas"],
+    "dosen_pembimbing":  ["dosen pembimbing", "dosen"],
+    "link_poster":       ["link poster", "link poster / sumber", "poster", "sumber", "link"],
 }
 
 FORMAT_CONTOH = """
@@ -61,19 +79,28 @@ Kirim data di atas (boleh copy-paste lalu ubah isinya) dan bot akan langsung mem
 """
 
 # ─── Parsing input user ────────────────────────────────────────────────────────
-def parse_input(text: str) -> dict | None:
-    """Parsing teks multi-baris jadi dict field."""
+def parse_input(text: str) -> tuple:
+    """Parsing teks multi-baris jadi dict field, toleran terhadap variasi label."""
     data = {}
-    for line in text.strip().splitlines():
+    # Kumpulkan baris; nilai bisa multi-baris (mis. nama dosen sangat panjang)
+    lines = text.strip().splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if ":" in line:
-            key, _, value = line.partition(":")
-            key_clean = key.strip().lower()
-            value_clean = value.strip()
-            # Mapping label → key internal
-            for internal_key, label in FIELD_LABELS.items():
-                if key_clean == label.lower():
-                    data[internal_key] = value_clean
+            key_raw, _, value_raw = line.partition(":")
+            key_clean = key_raw.strip().lower()
+            value_clean = value_raw.strip()
+            # Cocokkan ke salah satu alias
+            matched_key = None
+            for internal_key, aliases in FIELD_ALIASES.items():
+                if key_clean in aliases:
+                    matched_key = internal_key
                     break
+            if matched_key:
+                data[matched_key] = value_clean
+        i += 1
+
     # Cek apakah semua field wajib ada
     required = [k for k in FIELD_LABELS if k != "nama_lomba_pendek"]
     missing = [FIELD_LABELS[k] for k in required if k not in data]
@@ -249,8 +276,10 @@ async def cmd_bantuan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or ""
 
-    # Hanya proses jika ada minimal satu label yang dikenal
-    has_label = any(label.lower() in text.lower() for label in FIELD_LABELS.values())
+    # Hanya proses jika ada minimal satu label yang dikenal (cek semua alias)
+    text_lower = text.lower()
+    all_aliases = [alias for aliases in FIELD_ALIASES.values() for alias in aliases]
+    has_label = any(f"{alias}:" in text_lower for alias in all_aliases)
     if not has_label:
         await update.message.reply_text(
             "Tidak mengenali format. Ketik /buat untuk melihat format pengisian. 😊"
