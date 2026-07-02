@@ -5,7 +5,9 @@ Alur: pengguna menjawab satu per satu, bot memandu langkah demi langkah.
 
 import os, re, shutil, zipfile, copy, logging
 from datetime import datetime
+from io import BytesIO
 from lxml import etree
+from PIL import Image
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -29,6 +31,7 @@ TEMPLATE_PATH = "template_proposal.docx"
     S_PENYELENGGARA,
     S_BIAYA,
     S_LINK_POSTER,
+    S_POSTER_FOTO,
     S_JML_TAHAPAN,
     S_TAHAPAN,
     S_JML_KELOMPOK,
@@ -37,7 +40,14 @@ TEMPLATE_PATH = "template_proposal.docx"
     S_PESERTA,
     S_DOSEN,
     S_KONFIRMASI,
-) = range(16)
+) = range(17)
+
+# Prefiks kelas yang menandakan taruna tingkat 4 (punya dosen pembimbing TA)
+TINGKAT4_PREFIXES = ("IV ", "IV-", "4 ", "TK4", "TINGKAT 4")
+
+def is_tingkat_4(kelas: str) -> bool:
+    k = kelas.strip().upper()
+    return any(k.startswith(p) for p in TINGKAT4_PREFIXES)
 
 TEMPAT_OPTIONS = [["Daring", "Luring", "Daring dan Luring"]]
 
@@ -82,7 +92,7 @@ async def cmd_buat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await ask(
         update,
-        "📝 *Langkah 1/15 — Nama Lomba*\n" + progress(1, 15) + "\n\nKetik nama lengkap lomba yang diikuti:",
+        "📝 *Langkah 1/16 — Nama Lomba*\n" + progress(1, 16) + "\n\nKetik nama lengkap lomba yang diikuti:",
         tip="Compfest 18 2026",
     )
     return S_NAMA_LOMBA
@@ -94,7 +104,7 @@ async def get_nama_lomba(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["nama_lomba"] = update.message.text.strip()
     await ask(
         update,
-        "📅 *Langkah 2/15 — Tanggal Surat*\n" + progress(2, 15) + "\n\nMasukkan tanggal surat hari ini:",
+        "📅 *Langkah 2/16 — Tanggal Surat*\n" + progress(2, 16) + "\n\nMasukkan tanggal surat hari ini:",
         tip="2 Juli 2026",
     )
     return S_TANGGAL_SURAT
@@ -106,7 +116,7 @@ async def get_tanggal_surat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["tanggal_surat"] = update.message.text.strip()
     await ask(
         update,
-        "🔢 *Langkah 3/15 — Nomor Surat*\n" + progress(3, 15) + "\n\nMasukkan nomor surat (ketik `-` jika belum ada):",
+        "🔢 *Langkah 3/16 — Nomor Surat*\n" + progress(3, 16) + "\n\nMasukkan nomor surat (ketik `-` jika belum ada):",
         tip="002/SKT/VII/2026",
     )
     return S_NOMOR_SURAT
@@ -118,7 +128,7 @@ async def get_nomor_surat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["nomor_surat"] = update.message.text.strip()
     await ask(
         update,
-        "🗓️ *Langkah 4/15 — Tanggal Pelaksanaan Lomba*\n" + progress(4, 15) + "\n\nMasukkan tanggal lomba berlangsung:",
+        "🗓️ *Langkah 4/16 — Tanggal Pelaksanaan Lomba*\n" + progress(4, 16) + "\n\nMasukkan tanggal lomba berlangsung:",
         tip="17 Juni s.d. 27 September 2026",
     )
     return S_TANGGAL_LOMBA
@@ -130,7 +140,7 @@ async def get_tanggal_lomba(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["tanggal_lomba"] = update.message.text.strip()
     await ask(
         update,
-        "📍 *Langkah 5/15 — Tempat Lomba*\n" + progress(5, 15) + "\n\nPilih tempat pelaksanaan:",
+        "📍 *Langkah 5/16 — Tempat Lomba*\n" + progress(5, 16) + "\n\nPilih tempat pelaksanaan:",
         keyboard=TEMPAT_OPTIONS,
     )
     return S_TEMPAT_LOMBA
@@ -142,7 +152,7 @@ async def get_tempat_lomba(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["tempat_lomba"] = update.message.text.strip()
     await ask(
         update,
-        "🏛️ *Langkah 6/15 — Penyelenggara*\n" + progress(6, 15) + "\n\nSiapa penyelenggara lomba ini?",
+        "🏛️ *Langkah 6/16 — Penyelenggara*\n" + progress(6, 16) + "\n\nSiapa penyelenggara lomba ini?",
         tip="Fakultas Ilmu Komputer, Universitas Indonesia",
     )
     return S_PENYELENGGARA
@@ -154,7 +164,7 @@ async def get_penyelenggara(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["penyelenggara"] = update.message.text.strip()
     await ask(
         update,
-        "💰 *Langkah 7/15 — Biaya Pendaftaran*\n" + progress(7, 15) + "\n\nBerapa biaya pendaftaran?",
+        "💰 *Langkah 7/16 — Biaya Pendaftaran*\n" + progress(7, 16) + "\n\nBerapa biaya pendaftaran?",
         keyboard=[["Tidak dipungut biaya"], ["Rp 60.000"], ["Rp 100.000"], ["Rp 150.000"]],
         tip="Rp 60.000",
     )
@@ -167,7 +177,7 @@ async def get_biaya(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["biaya"] = update.message.text.strip()
     await ask(
         update,
-        "🔗 *Langkah 8/15 — Link Poster / Sumber*\n" + progress(8, 15) + "\n\nMasukkan URL sumber informasi lomba:",
+        "🔗 *Langkah 8/16 — Link Poster / Sumber*\n" + progress(8, 16) + "\n\nMasukkan URL sumber informasi lomba:",
         tip="https://compfest.id/",
     )
     return S_LINK_POSTER
@@ -177,9 +187,38 @@ async def get_biaya(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════════════════════════
 async def get_link_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["link_poster"] = update.message.text.strip()
+    await update.message.reply_text(
+        "🖼️ *Langkah 9/16 — Foto/Gambar Poster*\n\n"
+        "Kirim *foto poster* lomba ini (langsung sebagai gambar, bukan file dokumen).\n"
+        "Jika tidak punya poster, ketik `-` untuk lewati (poster di dokumen tidak akan diganti).",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return S_POSTER_FOTO
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 8b — Foto Poster
+# ══════════════════════════════════════════════════════════════════════════════
+async def get_poster_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.photo:
+        photo = update.message.photo[-1]  # resolusi tertinggi
+        file = await photo.get_file()
+        buf = BytesIO()
+        await file.download_to_memory(out=buf)
+        buf.seek(0)
+        context.user_data["poster_bytes"] = buf.read()
+    elif update.message.text and update.message.text.strip() == "-":
+        context.user_data["poster_bytes"] = None
+    else:
+        await update.message.reply_text(
+            "⚠️ Kirim gambar poster (sebagai foto), atau ketik `-` untuk lewati.",
+            parse_mode="Markdown",
+        )
+        return S_POSTER_FOTO
+
     await ask(
         update,
-        "📋 *Langkah 9/15 — Jumlah Tahapan Lomba*\n" + progress(9, 15) + "\n\nAda berapa tahapan dalam lomba ini?",
+        "📋 *Langkah 9/16 — Jumlah Tahapan Lomba*\n" + progress(9, 16) + "\n\nAda berapa tahapan dalam lomba ini?",
         keyboard=[["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]],
     )
     return S_JML_TAHAPAN
@@ -255,7 +294,7 @@ async def get_tahapan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Selesai semua tahapan → lanjut ke kelompok
             await ask(
                 update,
-                "👥 *Langkah 11/15 — Jumlah Kelompok*\n" + progress(11, 15) +
+                "👥 *Langkah 11/16 — Jumlah Kelompok*\n" + progress(11, 16) +
                 "\n\nAda berapa kelompok peserta?",
                 keyboard=[["1", "2", "3"], ["4", "5", "6"]],
             )
@@ -312,7 +351,7 @@ async def get_jml_peserta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     np  = int(txt)
     ud["_peserta_total"]   = np
     ud["_peserta_idx"]     = 0
-    ud["_peserta_sub"]     = 0   # 0=nama,1=kelas,2=bidang
+    ud["_peserta_sub"]     = 0   # 0=nama,1=kelas,2=bidang,3=dosen akademik,4=dosen TA
     ud["_peserta_list"]    = []
     nama_klp = ud["_kelompok_nama_sementara"]
     await ask(
@@ -357,29 +396,68 @@ async def get_peserta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return S_PESERTA
 
-    else:  # sub == 2
+    elif sub == 2:
         cur["bidang"] = update.message.text.strip()
-        ud["_peserta_list"].append(dict(cur))
-        ud["_peserta_current"] = {}
-        ud["_peserta_sub"] = 0
-        ud["_peserta_idx"] = pidx + 1
+        ud["_peserta_current"] = cur
+        ud["_peserta_sub"] = 3
+        await ask(
+            update,
+            f"🎓 *{nama_klp} — Peserta {pidx+1}/{ptotal}: Dosen Pembimbing Akademik*\n\n"
+            f"Siapa dosen pembimbing akademik _{cur['nama']}_?",
+            tip="Fetty Amelia, S.ST., M.T.",
+        )
+        return S_PESERTA
 
-        if pidx + 1 < ptotal:
+    elif sub == 3:
+        cur["dosen_akademik"] = update.message.text.strip()
+        ud["_peserta_current"] = cur
+        if is_tingkat_4(cur["kelas"]):
+            ud["_peserta_sub"] = 4
             await ask(
                 update,
-                f"👤 *{nama_klp} — Peserta {pidx+2}/{ptotal}: Nama*\n\nKetik nama peserta ke-{pidx+2}:",
-                tip="Gede Gangga Widiagung",
+                f"📘 *{nama_klp} — Peserta {pidx+1}/{ptotal}: Dosen Pembimbing Tugas Akhir*\n\n"
+                f"_{cur['nama']}_ terdeteksi tingkat 4. Siapa dosen pembimbing tugas akhirnya?",
+                tip="Dr. Magfirawaty, S.Si., M.Si.",
             )
             return S_PESERTA
         else:
-            # Selesai peserta di kelompok ini → tanya dosen
-            ud["_dosen_kelompok_target"] = kidx
-            await ask(
-                update,
-                f"👨‍🏫 *{nama_klp} — Dosen Pembimbing*\n\nSiapa dosen pembimbing untuk kelompok ini?\n_(pisah koma jika lebih dari satu)_",
-                tip="Dr. Hendra Wijaya, M.T.",
-            )
-            return S_DOSEN
+            cur["dosen_ta"] = ""
+            return await simpan_peserta_dan_lanjut(update, context)
+
+    else:  # sub == 4
+        cur["dosen_ta"] = update.message.text.strip()
+        return await simpan_peserta_dan_lanjut(update, context)
+
+
+async def simpan_peserta_dan_lanjut(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ud       = context.user_data
+    cur      = ud["_peserta_current"]
+    pidx     = ud["_peserta_idx"]
+    ptotal   = ud["_peserta_total"]
+    nama_klp = ud["_kelompok_nama_sementara"]
+
+    ud["_peserta_list"].append(dict(cur))
+    ud["_peserta_current"] = {}
+    ud["_peserta_sub"] = 0
+    ud["_peserta_idx"] = pidx + 1
+
+    if pidx + 1 < ptotal:
+        await ask(
+            update,
+            f"👤 *{nama_klp} — Peserta {pidx+2}/{ptotal}: Nama*\n\nKetik nama peserta ke-{pidx+2}:",
+            tip="Gede Gangga Widiagung",
+        )
+        return S_PESERTA
+    else:
+        # Selesai peserta di kelompok ini → tanya dosen pembimbing lomba (kelompok)
+        await ask(
+            update,
+            f"👨‍🏫 *{nama_klp} — Dosen Pembimbing Lomba*\n\n"
+            f"Siapa dosen pembimbing *lomba* untuk kelompok ini? _(berbeda dari dosen akademik/TA di atas)_\n"
+            f"_(pisah koma jika lebih dari satu)_",
+            tip="Dimas Febriyan Priambodo, M.Cs.",
+        )
+        return S_DOSEN
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 15 — Dosen per Kelompok
@@ -425,6 +503,7 @@ async def tampilkan_konfirmasi(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🏛️ *Penyelenggara:* {ud['penyelenggara']}",
         f"💰 *Biaya:* {ud['biaya']}",
         f"🔗 *Link:* {ud['link_poster']}",
+        f"🖼️ *Poster:* {'Foto diterima ✅' if ud.get('poster_bytes') else 'Tidak diunggah (poster di dokumen tidak diganti)'}",
         f"\n📋 *Tahapan ({ud['jml_tahapan']}):*",
     ]
     for i, t in enumerate(ud["tahapan"], 1):
@@ -433,7 +512,11 @@ async def tampilkan_konfirmasi(update: Update, context: ContextTypes.DEFAULT_TYP
     for klp in ud["kelompok"]:
         lines.append(f"  🔹 *{klp['nama']}* — Dosen: {klp['dosen']}")
         for j, p in enumerate(klp["peserta"], 1):
-            lines.append(f"      {j}. {p['nama']} ({p['kelas']}) — {p['bidang']}")
+            ta_info = f" | TA: {p['dosen_ta']}" if p.get("dosen_ta") else ""
+            lines.append(
+                f"      {j}. {p['nama']} ({p['kelas']}) — {p['bidang']} "
+                f"| Akademik: {p['dosen_akademik']}{ta_info}"
+            )
 
     lines.append("\n\nApakah data sudah benar?")
     await ask(
@@ -575,31 +658,39 @@ def generate_proposal(ud: dict, output_path: str) -> bool:
         tahapan      = ud["tahapan"]
         kelompok     = ud["kelompok"]
 
-        # ── 1. Semua occurrences NAMA_LOMBA & tanggal surat ─────────────────
-        for para in body.iter(f"{W}p"):
-            full = para_text(para)
-            if "NAMA_LOMBA" in full:
-                replace_in_para(para, "NAMA_LOMBA", nama_lomba)
-            if "DD MM YY" in full:
-                replace_in_para(para, "DD MM YY", tgl_surat)
-            if "Bogor, DD MM" in para_text(para):
-                replace_in_para(para, "Bogor, DD MM", f"Bogor, {tgl_surat.split()[0]} {tgl_surat.split()[1] if len(tgl_surat.split())>1 else ''}")
-
-        # Re-parse setelah modifikasi paragraf bebas
+        # ── 1. Replace semua placeholder teks langsung di XML mentah ────────
+        # PENTING: urutan ini disengaja. "DD MM s.d. DD MM YY" (placeholder
+        # tanggal pelaksanaan lomba) HARUS diganti SEBELUM "DD MM YY" generik
+        # (placeholder tanggal surat), karena string kedua adalah substring
+        # dari yang pertama — kalau dibalik, tanggal lomba tidak akan pernah
+        # terisi dan malah tertimpa tanggal surat.
         full_txt_replace(doc_path, tree, {
-            "NAMA_LOMBA":                              nama_lomba,
-            "DD MM YY":                                tgl_surat,
-            "17 Juni s.d. 27 September 2026":          tgl_lomba,
-            "Daring dan Luring":                       tempat_lomba,
+            "DD MM s.d. DD MM YY":                     tgl_lomba,      # tanggal pelaksanaan lomba
+            "NAMA_LOMBA":                               nama_lomba,
+            "Bogor, DD MM YY":                          f"Bogor, {tgl_surat}",
+            "Tanggal: DD MM YY":                        f"Tanggal: {tgl_surat}",
+            "DD MM YY":                                 tgl_surat,      # fallback tanggal surat
+            "Daring/Luring":                            tempat_lomba,
             "Fakultas Ilmu Komputer Universitas Indonesia": penyeleng,
-            "Rp 60.000":                               biaya,
-            "https://compfest.id/":                    link_poster,
+            "Rp 60.000":                                biaya,
+            "https://compfest.id/":                     link_poster,
         })
 
         # Re-parse setelah full_txt_replace
         tree = etree.parse(doc_path)
         root = tree.getroot()
         body = root.find(f"{W}body")
+
+        # ── 1b. Placeholder yang terpecah lintas beberapa <w:r> (mis. karena
+        # formatting berbeda-beda di dalam Word) tidak akan cocok dengan raw
+        # string replace di atas. Untuk placeholder ini, gabungkan teks per
+        # paragraf dulu baru replace.
+        for para in body.iter(f"{W}p"):
+            full = para_text(para)
+            if "DD MM s.d. DD MM YY" in full:
+                replace_in_para(para, "DD MM s.d. DD MM YY", tgl_lomba)
+            if "Daring/Luring" in full:
+                replace_in_para(para, "Daring/Luring", tempat_lomba)
 
         # ── 2. Nomor Surat (cell kosong di tabel header) ────────────────────
         for tr in body.iter(f"{W}tr"):
@@ -685,8 +776,11 @@ def generate_proposal(ud: dict, output_path: str) -> bool:
                             replace_in_para(para, para_text(para), p["kelas"])
                         for para in pcells[3].iter(f"{W}p"):
                             replace_in_para(para, para_text(para), p["bidang"])
+                        dosen_status = p["dosen_akademik"]
+                        if p.get("dosen_ta"):
+                            dosen_status += f" dan {p['dosen_ta']}"
                         for para in pcells[4].iter(f"{W}p"):
-                            replace_in_para(para, para_text(para), f"Diizinkan ({klp['dosen']})")
+                            replace_in_para(para, para_text(para), f"Diizinkan ({dosen_status})")
                     peserta_tbl.append(new_pes)
 
         # ── 5. Tabel DOSEN PEMBIMBING ────────────────────────────────────────
@@ -717,8 +811,19 @@ def generate_proposal(ud: dict, output_path: str) -> bool:
                         replace_in_para(para, para_text(para), klp["dosen"])
                 dosen_tbl.append(new_row)
 
-        # ── Simpan & repack ──────────────────────────────────────────────────
+        # ── Simpan dulu semua perubahan tabel/teks ke disk ───────────────────
+        # PENTING: ini harus terjadi SEBELUM langkah poster, karena
+        # replace_poster_image membaca ulang doc_path dari disk. Kalau
+        # dibalik, perubahan tahapan/peserta/dosen/nomor surat yang masih
+        # ada di memori (belum ditulis) akan hilang tertimpa.
         tree.write(doc_path, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+        # ── 6. Ganti gambar poster (jika pengguna mengirim foto) ─────────────
+        poster_bytes = ud.get("poster_bytes")
+        if poster_bytes:
+            replace_poster_image(exdir, doc_path, poster_bytes)
+
+        # ── Repack ────────────────────────────────────────────────────────
         os.remove(output_path)
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zout:
             for r, _, files in os.walk(exdir):
@@ -733,6 +838,87 @@ def generate_proposal(ud: dict, output_path: str) -> bool:
         logger.error(f"generate_proposal error: {e}", exc_info=True)
         if os.path.exists(exdir):
             shutil.rmtree(exdir)
+        return False
+
+
+def replace_poster_image(exdir: str, doc_path: str, poster_bytes: bytes) -> bool:
+    """
+    Cari paragraf 'POSTER KEGIATAN LOMBA', ambil drawing pertama sesudahnya,
+    lalu timpa file media yang dirujuk dengan foto baru dari pengguna dan
+    sesuaikan ukuran (wp:extent) agar rasio aspeknya tidak gepeng/melar.
+    """
+    try:
+        tree = etree.parse(doc_path)
+        root = tree.getroot()
+        body = root.find(f"{W}body")
+        paras = body.findall(f"{W}p")
+
+        # Cari heading "POSTER KEGIATAN LOMBA", lalu paragraf drawing berikutnya
+        target_drawing = None
+        heading_idx = None
+        for i, p in enumerate(paras):
+            if "POSTER KEGIATAN LOMBA" in para_text(p):
+                heading_idx = i
+                break
+        if heading_idx is None:
+            return False
+        for p in paras[heading_idx:]:
+            drawings = p.findall(f".//{W}drawing")
+            if drawings:
+                target_drawing = drawings[0]
+                break
+        if target_drawing is None:
+            return False
+
+        WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+        AR = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+        blip = target_drawing.find(f".//{{http://schemas.openxmlformats.org/drawingml/2006/main}}blip")
+        if blip is None:
+            return False
+        rid = blip.get(f"{AR}embed")
+        if not rid:
+            return False
+
+        rels_path = os.path.join(exdir, "word", "_rels", "document.xml.rels")
+        rels_tree = etree.parse(rels_path)
+        rel_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+        target_file = None
+        for rel in rels_tree.getroot():
+            if rel.get("Id") == rid:
+                target_file = rel.get("Target")
+                break
+        if not target_file:
+            return False
+
+        media_path = os.path.join(exdir, "word", target_file)
+
+        # Proses gambar baru: convert ke PNG, batasi ukuran maksimal
+        img = Image.open(BytesIO(poster_bytes)).convert("RGB")
+        w_px, h_px = img.size
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        with open(media_path, "wb") as f:
+            f.write(buf.getvalue())
+
+        # Sesuaikan wp:extent supaya rasio aspek foto baru terjaga
+        MAX_W_EMU, MAX_H_EMU = 5150000, 4200000
+        ratio = w_px / h_px
+        if MAX_W_EMU / ratio <= MAX_H_EMU:
+            new_w, new_h = MAX_W_EMU, round(MAX_W_EMU / ratio)
+        else:
+            new_h, new_w = MAX_H_EMU, round(MAX_H_EMU * ratio)
+
+        for extent in target_drawing.findall(f".//{WP}extent"):
+            extent.set("cx", str(new_w))
+            extent.set("cy", str(new_h))
+        for ext_el in target_drawing.findall(f".//{{http://schemas.openxmlformats.org/drawingml/2006/main}}ext"):
+            ext_el.set("cx", str(new_w))
+            ext_el.set("cy", str(new_h))
+
+        tree.write(doc_path, xml_declaration=True, encoding="UTF-8", standalone=True)
+        return True
+    except Exception as e:
+        logger.error(f"replace_poster_image error: {e}", exc_info=True)
         return False
 
 
@@ -766,6 +952,7 @@ def main():
             S_PENYELENGGARA:[MessageHandler(filters.TEXT & ~filters.COMMAND, get_penyelenggara)],
             S_BIAYA:        [MessageHandler(filters.TEXT & ~filters.COMMAND, get_biaya)],
             S_LINK_POSTER:  [MessageHandler(filters.TEXT & ~filters.COMMAND, get_link_poster)],
+            S_POSTER_FOTO:  [MessageHandler((filters.PHOTO | filters.TEXT) & ~filters.COMMAND, get_poster_foto)],
             S_JML_TAHAPAN:  [MessageHandler(filters.TEXT & ~filters.COMMAND, get_jml_tahapan)],
             S_TAHAPAN:      [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tahapan)],
             S_JML_KELOMPOK: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_jml_kelompok)],

@@ -79,24 +79,24 @@ BOT_TOKEN=token_anda_disini python bot.py
 | `/buat` | Tampilkan format pengisian |
 | `/bantuan` | Panduan lengkap |
 
-### Format pengisian
+### Format pengisian (mode wizard, dijawab satu per satu)
 
-Kirim pesan dengan format berikut ke bot:
+Bot berjalan sebagai **wizard**: setiap pertanyaan dijawab satu per satu (bukan satu pesan berisi semua field). Alur singkatnya:
 
-```
-Nomor Surat: 002/SKT/2025
-Tanggal Surat: 1 Juli 2025
-Nama Lomba: National Programming Contest 2025
-Nama Lomba Pendek: NPC 2025
-Tanggal Lomba: 10 s.d. 15 Agustus 2025
-Tempat Lomba: Daring
-Penyelenggara: Universitas Gadjah Mada
-Biaya Pendaftaran: Tidak dipungut biaya
-Nama Peserta: Budi Santoso, Ani Rahayu, Citra Dewi
-Kelas Peserta: III RPLK, III RPLK, III RPLK
-Dosen Pembimbing: Dr. Ir. Hendra Wijaya, M.T.
-Link Poster: https://example.com/poster
-```
+1. Nama Lomba
+2. Tanggal Surat
+3. Nomor Surat
+4. Tanggal Pelaksanaan Lomba
+5. Tempat Lomba
+6. Penyelenggara
+7. Biaya Pendaftaran
+8. Link Poster / Sumber
+8b. **Foto Poster** — kirim gambar poster lomba langsung sebagai foto (bukan file dokumen). Foto ini akan menggantikan gambar poster contoh di dalam dokumen secara otomatis (rasio gambar disesuaikan agar tidak gepeng/melar). Ketik `-` untuk melewati langkah ini jika belum punya poster.
+9. Tahapan Lomba (nama, tanggal, tempat — diulang sesuai jumlah tahapan)
+10. Kelompok Peserta, tiap kelompok berisi:
+    - Nama Kelompok
+    - Peserta (nama, kelas, bidang lomba, **dosen pembimbing akademik**, dan **dosen pembimbing tugas akhir** — pertanyaan dosen TA hanya muncul otomatis bila kelas peserta terdeteksi tingkat 4, misalnya diawali "IV")
+    - Dosen Pembimbing **Lomba** untuk kelompok tersebut (berbeda dari dosen akademik/TA di atas — ini mengisi tabel "Dosen Pembimbing" terpisah)
 
 Bot akan membalas dengan file `.docx` yang sudah terisi otomatis! 🎉
 
