@@ -40,6 +40,11 @@ proposal_bot/
    ```
    BOT_TOKEN = token_anda_disini
    ```
+   Opsional — supaya setiap proposal yang dibuat juga otomatis dikirim salinannya ke Anda sebagai admin/pemilik bot, tambahkan juga:
+   ```
+   ADMIN_CHAT_ID = chat_id_anda_disini
+   ```
+   Dapatkan chat ID Anda dengan chat ke bot `@userinfobot` di Telegram. Bisa diisi lebih dari satu ID, pisahkan dengan koma.
 5. Klik **Deploy** — bot langsung online!
 
 > 💡 Railway gratis untuk pemakaian ringan (~500 jam/bulan). Cukup untuk bot yang tidak digunakan terus-menerus.

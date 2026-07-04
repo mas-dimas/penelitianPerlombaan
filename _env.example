@@ -1,2 +1,8 @@
 # Salin file ini menjadi .env lalu isi token bot Anda
 BOT_TOKEN=ISI_TOKEN_ANDA_DISINI
+
+# (Opsional) Chat ID admin/pemilik bot — setiap proposal yang berhasil dibuat
+# akan otomatis dikirim juga ke chat ini sebagai salinan/arsip.
+# Cara dapatkan chat ID: chat bot @userinfobot di Telegram, salin angka "Id".
+# Bisa diisi lebih dari satu, pisahkan dengan koma, contoh: 111111,222222
+ADMIN_CHAT_ID=

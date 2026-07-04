@@ -19,6 +19,7 @@ logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=loggin
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN     = os.getenv("BOT_TOKEN", "MASUKKAN_TOKEN_BOT_DISINI")
+ADMIN_CHAT_IDS = [c.strip() for c in os.getenv("ADMIN_CHAT_ID", "").split(",") if c.strip()]
 TEMPLATE_PATH = "template_proposal.docx"
 
 # ── State ConversationHandler ──────────────────────────────────────────────────
@@ -551,16 +552,42 @@ async def get_konfirmasi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ok = generate_proposal(ud, out)
     if ok and os.path.exists(out):
         with open(out, "rb") as f:
-            await update.message.reply_document(
-                document=f,
-                filename=out,
-                caption=(
-                    f"✅ *Proposal berhasil dibuat!*\n"
-                    f"📌 {ud['nama_lomba']}\n"
-                    f"📅 {ud['tanggal_surat']}"
-                ),
-                parse_mode="Markdown",
-            )
+            file_bytes = f.read()
+
+        pengirim = update.effective_user
+        pengirim_label = f"@{pengirim.username}" if pengirim and pengirim.username else (
+            pengirim.full_name if pengirim else "Tidak diketahui"
+        )
+
+        await update.message.reply_document(
+            document=BytesIO(file_bytes),
+            filename=out,
+            caption=(
+                f"✅ *Proposal berhasil dibuat!*\n"
+                f"📌 {ud['nama_lomba']}\n"
+                f"📅 {ud['tanggal_surat']}"
+            ),
+            parse_mode="Markdown",
+        )
+
+        # Kirim salinan ke admin/pemilik bot (jika ADMIN_CHAT_ID diset)
+        for admin_id in ADMIN_CHAT_IDS:
+            try:
+                await context.bot.send_document(
+                    chat_id=admin_id,
+                    document=BytesIO(file_bytes),
+                    filename=out,
+                    caption=(
+                        f"📥 *Salinan proposal (arsip admin)*\n"
+                        f"👤 Dari: {pengirim_label} (id: {pengirim.id if pengirim else '-'})\n"
+                        f"📌 {ud['nama_lomba']}\n"
+                        f"📅 {ud['tanggal_surat']}"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.error(f"Gagal mengirim salinan ke admin {admin_id}: {e}")
+
         os.remove(out)
     else:
         await update.message.reply_text("❌ Gagal membuat proposal. Cek log bot.")
@@ -612,26 +639,61 @@ def clone_row(row):
     return copy.deepcopy(row)
 
 def replace_in_para(para, old, new):
-    """Replace teks di seluruh paragraf (gabungkan semua run dulu)."""
+    """
+    Replace teks di dalam paragraf. Hanya run yang benar-benar tumpang tindih
+    dengan `old` yang digabung/dihapus — run sebelum & sesudahnya (termasuk
+    <w:tab/> di dalamnya) TIDAK disentuh. Ini penting karena versi lama fungsi
+    ini menggabungkan SEMUA run jadi satu, yang diam-diam menghapus tab stop
+    (mis. pada baris "tanggal :" / "tempat:") dan merusak alignment kolom.
+    """
     full = para_text(para)
     if old not in full:
         return
-    new_full = full.replace(old, new)
+    start = full.find(old)
+    end = start + len(old)
+
     runs = para.findall(f".//{W}r")
     if not runs:
         return
-    # Simpan semua teks di run pertama, hapus run lainnya
-    rPr = runs[0].find(f"{W}rPr")
+
+    # Offset tiap run dalam `full` (hanya teks <w:t>, tab tidak menambah panjang)
+    offset = 0
+    run_spans = []
     for r in runs:
-        for t in r.findall(f"{W}t"):
-            r.remove(t)
-    # Tambah w:t baru ke run pertama
-    t_elem = etree.SubElement(runs[0], f"{W}t")
-    t_elem.text = new_full
-    t_elem.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-    # Hapus run lain (tapi jaga rPr run pertama)
-    parent = runs[0].getparent()
-    for r in runs[1:]:
+        text = "".join(t.text or "" for t in r.findall(f"{W}t"))
+        run_spans.append((r, offset, offset + len(text)))
+        offset += len(text)
+
+    affected = [rs for rs in run_spans if rs[2] > start and rs[1] < end]
+    if not affected:
+        affected = run_spans  # fallback, seharusnya tidak terjadi
+
+    first_run, first_start, _ = affected[0]
+    prefix = ""
+    if first_start < start:
+        run_text = "".join(t.text or "" for t in first_run.findall(f"{W}t"))
+        prefix = run_text[: start - first_start]
+
+    last_run, last_start, last_end = affected[-1]
+    suffix = ""
+    if last_end > end:
+        run_text = "".join(t.text or "" for t in last_run.findall(f"{W}t"))
+        suffix = run_text[end - last_start:]
+
+    merged_text = prefix + new + suffix
+
+    ts = first_run.findall(f"{W}t")
+    if not ts:
+        ts = [etree.SubElement(first_run, f"{W}t")]
+    ts[0].text = merged_text
+    ts[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    for t in ts[1:]:
+        t.getparent().remove(t)
+
+    parent = first_run.getparent()
+    for (r, _, _) in affected[1:]:
+        if r in list(parent):
+            parent.remove(r)
         if r in list(parent):
             parent.remove(r)
 
